@@ -232,7 +232,7 @@ class CapabilitiesTest(BaseGameClass):
                         setup_prompt + "\n\n" + llm_prompt,
                         [], # no history
                         keep_appending=False,
-                        MAX_TOKENS=None if ('opus-4' in self.subject_name or 'sonnet-4' in self.subject_name) else 1,
+                        MAX_TOKENS=None if ('opus-4' in self.subject_name or 'sonnet-4' in self.subject_name) else 10,
                         temp=self.temperature
                     )
                 
