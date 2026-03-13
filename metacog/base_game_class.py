@@ -64,7 +64,10 @@ class BaseGameClass:
     def _setup_provider(self):
         """Determine provider based on model name."""
         if not self.is_human_player:
-            if self.subject_name.startswith("vllm/") or use_vllm:
+            use_vllm_runtime = os.environ.get("USE_VLLM", "").lower() in ("1", "true", "yes")
+            vllm_base_url_runtime = os.environ.get("VLLM_BASE_URL")
+            vllm_api_key_runtime = os.environ.get("VLLM_API_KEY", "EMPTY")
+            if self.subject_name.startswith("vllm/") or use_vllm_runtime:
                 self.provider = "vLLM"
             else:
                 if self.subject_name.startswith("claude"):
@@ -87,12 +90,12 @@ class BaseGameClass:
             elif self.provider == "OpenAI":# or self.provider == "OpenRouter":
                 self.client = OpenAI()
             elif self.provider == "vLLM":
-                if not vllm_base_url:
+                if not vllm_base_url_runtime:
                     raise ValueError("Set VLLM_BASE_URL to your local vLLM server (for example http://localhost:8000).")
-                base_url = vllm_base_url.rstrip("/")
+                base_url = vllm_base_url_runtime.rstrip("/")
                 if not base_url.endswith("/v1"):
                     base_url = f"{base_url}/v1"
-                self.client = OpenAI(api_key=vllm_api_key, base_url=base_url)
+                self.client = OpenAI(api_key=vllm_api_key_runtime, base_url=base_url)
             elif self.provider == "OpenRouter":
                 self.client = OpenAI(api_key=openrouter_api_key, base_url="https://openrouter.ai/api/v1")####
             elif self.provider == "Google":
@@ -215,7 +218,7 @@ class BaseGameClass:
                             else: prefix = ''
                             model_name = prefix + self.subject_name.replace("_reasoning","").replace("_think","").replace("_nothink","")
                     elif self.provider == "vLLM":
-                        model_name = vllm_model_name or self.subject_name.removeprefix("vllm/")
+                        model_name = os.environ.get("VLLM_MODEL") or self.subject_name.removeprefix("vllm/")
                     else: 
                         model_name = self.subject_name
                     if keep_appending:
