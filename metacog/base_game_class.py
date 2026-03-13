@@ -24,6 +24,10 @@ gemini_api_key = os.environ.get("GEMINI_API_KEY")
 xai_api_key = os.environ.get("XAI_API_KEY")
 deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY")    
 openrouter_api_key = os.environ.get("SPAR2025_OPENROUTER_KEY")##os.environ.get("OPENROUTER_API_KEY")
+vllm_api_key = os.environ.get("VLLM_API_KEY", "EMPTY")
+vllm_base_url = os.environ.get("VLLM_BASE_URL")
+vllm_model_name = os.environ.get("VLLM_MODEL")
+use_vllm = os.environ.get("USE_VLLM", "").lower() in ("1", "true", "yes")
 
 from collections import Counter
 from typing import List, Dict, Tuple
@@ -60,25 +64,35 @@ class BaseGameClass:
     def _setup_provider(self):
         """Determine provider based on model name."""
         if not self.is_human_player:
-            if self.subject_name.startswith("claude"):
-                self.provider = "Anthropic"
-            elif 'gpt-5' not in self.subject_name and ("gpt" in self.subject_name or self.subject_name.startswith("o3") or self.subject_name.startswith("o1")):
-                self.provider = "OpenAI"
-            elif self.subject_name.startswith("gemini"):
-                self.provider = "Google"
-            elif self.subject_name.startswith("grok"):
-                self.provider = "xAI"
-            elif re.match(r"meta-llama/Meta-Llama-3\.1-\d+B", self.subject_name):
-                self.provider = "NDIF"###"Hyperbolic"###
-            #elif "deepseek" in self.subject_name:
-            #    self.provider = "DeepSeek"
+            if self.subject_name.startswith("vllm/") or use_vllm:
+                self.provider = "vLLM"
             else:
-                self.provider = "OpenRouter"#"Hyperbolic"
+                if self.subject_name.startswith("claude"):
+                    self.provider = "Anthropic"
+                elif 'gpt-5' not in self.subject_name and ("gpt" in self.subject_name or self.subject_name.startswith("o3") or self.subject_name.startswith("o1")):
+                    self.provider = "OpenAI"
+                elif self.subject_name.startswith("gemini"):
+                    self.provider = "Google"
+                elif self.subject_name.startswith("grok"):
+                    self.provider = "xAI"
+                elif re.match(r"meta-llama/Meta-Llama-3\.1-\d+B", self.subject_name):
+                    self.provider = "NDIF"###"Hyperbolic"###
+                #elif "deepseek" in self.subject_name:
+                #    self.provider = "DeepSeek"
+                else:
+                    self.provider = "OpenRouter"#"Hyperbolic"
 
             if self.provider == "Anthropic": 
                 self.client = anthropic.Anthropic(api_key=anthropic_api_key)
             elif self.provider == "OpenAI":# or self.provider == "OpenRouter":
                 self.client = OpenAI()
+            elif self.provider == "vLLM":
+                if not vllm_base_url:
+                    raise ValueError("Set VLLM_BASE_URL to your local vLLM server (for example http://localhost:8000).")
+                base_url = vllm_base_url.rstrip("/")
+                if not base_url.endswith("/v1"):
+                    base_url = f"{base_url}/v1"
+                self.client = OpenAI(api_key=vllm_api_key, base_url=base_url)
             elif self.provider == "OpenRouter":
                 self.client = OpenAI(api_key=openrouter_api_key, base_url="https://openrouter.ai/api/v1")####
             elif self.provider == "Google":
@@ -180,7 +194,7 @@ class BaseGameClass:
                     #print(f"message={message}")
                     resp = message.content[0].text.strip()
                     return resp, None
-                elif self.provider == "OpenAI" or self.provider == "xAI" or self.provider == "DeepSeek" or self.provider == "OpenRouter":
+                elif self.provider == "OpenAI" or self.provider == "xAI" or self.provider == "DeepSeek" or self.provider == "OpenRouter" or self.provider == "vLLM":
                     if self.provider == "OpenRouter":
                         if self.subject_name == "gpt-4.1-2025-04-14": model_name = "openai/gpt-4.1"
                         elif self.subject_name=='claude-3-5-sonnet-20241022': model_name = 'anthropic/claude-3.5-sonnet'
@@ -200,6 +214,8 @@ class BaseGameClass:
                             elif 'glm-' in self.subject_name: prefix = 'z-ai/'
                             else: prefix = ''
                             model_name = prefix + self.subject_name.replace("_reasoning","").replace("_think","").replace("_nothink","")
+                    elif self.provider == "vLLM":
+                        model_name = vllm_model_name or self.subject_name.removeprefix("vllm/")
                     else: 
                         model_name = self.subject_name
                     if keep_appending:
@@ -208,80 +224,88 @@ class BaseGameClass:
                         formatted_messages = message_history
                     else:
                         formatted_messages = copy.deepcopy(message_history)
-                        if len(formatted_messages) > 0: formatted_messages[-1]["content"] = [{"type": "text", "text": formatted_messages[-1]["content"], "cache_control": {"type": "ephemeral"}}]
+                        if self.provider != "vLLM" and len(formatted_messages) > 0:
+                            formatted_messages[-1]["content"] = [{"type": "text", "text": formatted_messages[-1]["content"], "cache_control": {"type": "ephemeral"}}]
                         if system_msg != "": formatted_messages.append({"role": "system", "content": system_msg})
                         formatted_messages.append(user_msg)
                     #print(f"formatted_messages={formatted_messages}")
-                    completion = self.client.chat.completions.create(
-                        model=model_name,
-                        **({"max_completion_tokens": MAX_TOKENS} if self.subject_name.startswith("o3") else {"max_tokens": (None if 'gpt-5' in self.subject_name else MAX_TOKENS)}),
-                        **({"temperature": min(temp + attempt * temp_inc, max(temp,1.0))} if not self.subject_name.startswith("o3") else {}),
-                        messages=formatted_messages,
-                        **({"logprobs": True} if not self.subject_name.startswith("o3") else {}),
-                        **({"top_logprobs": len(options)} if not self.subject_name.startswith("o3") else {}),
-                        **({"reasoning_effort": "low"} if 'gpt-5' in self.subject_name else {}),
-                        **({"top_p": 1.0} if temp > 0.0 else {}),
-                        **{'extra_body': {
-                            **(
-                                # 1) OpenAI / GPT / o-series → use reasoning_effort
-                                {
-                                    "reasoning_effort": "high"
-                                }
-                                if (
-                                    (
-                                        "openai/" in self.subject_name
-                                        or "gpt-4" in self.subject_name
-                                        or self.subject_name.startswith("o4")
-                                        or self.subject_name.startswith("o3")
-                                    )
-                                    and (
-                                        "_think" in self.subject_name
-                                        or "_reasoning" in self.subject_name
-                                    )
-                                )
-                                # 2) everyone else: explicit thinking → Anthropic-style reasoning object
-                                else {
-                                    "reasoning": {
-                                        "enabled": True,
-                                        "exclude": False,
-                                        "max_tokens": 1024,
+                    if self.provider == "vLLM":
+                        completion = self.client.chat.completions.create(
+                            model=model_name,
+                            max_tokens=MAX_TOKENS,
+                            temperature=min(temp + attempt * temp_inc, max(temp,1.0)),
+                            messages=formatted_messages,
+                            logprobs=True,
+                            top_logprobs=len(options),
+                        )
+                    else:
+                        completion = self.client.chat.completions.create(
+                            model=model_name,
+                            **({"max_completion_tokens": MAX_TOKENS} if self.subject_name.startswith("o3") else {"max_tokens": (None if 'gpt-5' in self.subject_name else MAX_TOKENS)}),
+                            **({"temperature": min(temp + attempt * temp_inc, max(temp,1.0))} if not self.subject_name.startswith("o3") else {}),
+                            messages=formatted_messages,
+                            **({"logprobs": True} if not self.subject_name.startswith("o3") else {}),
+                            **({"top_logprobs": len(options)} if not self.subject_name.startswith("o3") else {}),
+                            **({"reasoning_effort": "low"} if 'gpt-5' in self.subject_name else {}),
+                            **({"top_p": 1.0} if temp > 0.0 else {}),
+                            **{'extra_body': {
+                                **(
+                                    # 1) OpenAI / GPT / o-series → use reasoning_effort
+                                    {
+                                        "reasoning_effort": "high"
                                     }
-                                }
-                                if (
-                                    "_think" in self.subject_name
-                                    or "_reasoning" in self.subject_name
-                                    or "-r1" in model_name
-                                )
-                                # 3) default-off bucket (your original rule)
-                                else {
-                                    "reasoning": {
-                                        "enabled": False
-                                    }
-                                }
-                                if (
-                                    (
-                                        "claude" in self.subject_name
-                                        or "gpt-oss" in self.subject_name
-                                        or (
-                                            "deepseek" in self.subject_name
-                                            and "v3.1" in self.subject_name
-                                            and "base" not in self.subject_name
+                                    if (
+                                        (
+                                            "openai/" in self.subject_name
+                                            or "gpt-4" in self.subject_name
+                                            or self.subject_name.startswith("o4")
+                                            or self.subject_name.startswith("o3")
+                                        )
+                                        and (
+                                            "_think" in self.subject_name
+                                            or "_reasoning" in self.subject_name
                                         )
                                     )
-                                    and "_reasoning" not in self.subject_name
-                                )
-                                # 4) otherwise, no extra reasoning field
-                                else {}
-                            ),
-#                            'seed': 42,
-                            'provider': {
-#                                **({"only": ["Chutes"]} if 'v3.1' in self.subject_name else {"only": ["DeepInfra"]} if '-r1' in self.subject_name else {"only": ["Cerebras"]} if 'qwen' in self.subject_name else {}),
-                                'require_parameters': False if 'claude' in self.subject_name or 'gpt-5' in self.subject_name or 'llama-3.1-405' in self.subject_name else True,
-                                "allow_fallbacks": False,
-#                                'quantizations': ['fp8'],
-                            },
-                        }} if self.provider == "OpenRouter" else {}
-                    ) 
+                                    # 2) everyone else: explicit thinking → Anthropic-style reasoning object
+                                    else {
+                                        "reasoning": {
+                                            "enabled": True,
+                                            "exclude": False,
+                                            "max_tokens": 1024,
+                                        }
+                                    }
+                                    if (
+                                        "_think" in self.subject_name
+                                        or "_reasoning" in self.subject_name
+                                        or "-r1" in model_name
+                                    )
+                                    # 3) default-off bucket (your original rule)
+                                    else {
+                                        "reasoning": {
+                                            "enabled": False
+                                        }
+                                    }
+                                    if (
+                                        (
+                                            "claude" in self.subject_name
+                                            or "gpt-oss" in self.subject_name
+                                            or (
+                                                "deepseek" in self.subject_name
+                                                and "v3.1" in self.subject_name
+                                                and "base" not in self.subject_name
+                                            )
+                                        )
+                                        and "_reasoning" not in self.subject_name
+                                    )
+                                    # 4) otherwise, no extra reasoning field
+                                    else {}
+                                ),
+                                'provider': {
+                                    'require_parameters': False if 'claude' in self.subject_name or 'gpt-5' in self.subject_name or 'llama-3.1-405' in self.subject_name else True,
+                                    "allow_fallbacks": False,
+                                },
+                            }} if self.provider == "OpenRouter" else {}
+                        ) 
                     if self.provider == "OpenRouter": print(f"Provider that responded: {completion.provider}")
                     reasoning = getattr(completion.choices[0].message, "reasoning", None)
                     if reasoning:
