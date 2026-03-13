@@ -317,7 +317,8 @@ class BaseGameClass:
                         self._log(reasoning)
 
                     print(f"completion={completion}") 
-                    resp = completion.choices[0].message.content.replace("<|channel|>", "").strip()
+                    resp = completion.choices[0].message.content.strip()
+                    if '120b' in self.subject_name: return resp, None
                     if 'o3' in self.subject_name or 'gpt-5' in self.subject_name: return resp, None
                     if len(options) == 1: #short answer, just average
                         token_logprobs = completion.choices[0].logprobs.content    
