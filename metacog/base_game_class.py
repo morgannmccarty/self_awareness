@@ -240,6 +240,7 @@ class BaseGameClass:
                             messages=formatted_messages,
                             logprobs=True,
                             top_logprobs=len(options),
+                            reasoning_effort='low'
                         )
                     else:
                         completion = self.client.chat.completions.create(
