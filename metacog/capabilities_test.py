@@ -1,5 +1,7 @@
 import time
 import json
+import os
+import argparse
 from load_and_format_datasets import load_and_format_dataset
 from base_game_class import *
 import random
@@ -482,7 +484,23 @@ class CapabilitiesTest(BaseGameClass):
         self._log(f"Capabilities measurement completed. Results saved to: {capabilities_file_path}")
         return True, capabilities_file_path
 
-def main(model_dataset_dict, temp):
+def main(
+    model_dataset_dict,
+    temp,
+    use_vllm=False,
+    vllm_base_url=None,
+    vllm_model=None,
+    vllm_api_key=None,
+):
+    if use_vllm:
+        os.environ["USE_VLLM"] = "1"
+        if vllm_base_url:
+            os.environ["VLLM_BASE_URL"] = vllm_base_url
+        if vllm_model:
+            os.environ["VLLM_MODEL"] = vllm_model
+        if vllm_api_key:
+            os.environ["VLLM_API_KEY"] = vllm_api_key
+
     for subject_name, datasets in model_dataset_dict.items():
         for DATASET_NAME in datasets:
             IS_HUMAN = False
@@ -539,7 +557,28 @@ def main(model_dataset_dict, temp):
     print("\nExecution completed.")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run capabilities test.")
+    parser.add_argument("--model", default="gemini-2.5-flash_nothink")
+    parser.add_argument("--dataset", default="SimpleMC", choices=["SimpleMC", "SimpleQA", "GPSA"])
+    parser.add_argument("--temp", type=float, default=1.0)
+    parser.add_argument("--use-vllm", action="store_true")
+    parser.add_argument("--vllm-base-url", default=None, help="Example: http://localhost:8000")
+    parser.add_argument("--vllm-model", default=None, help="Model name served by vLLM")
+    parser.add_argument("--vllm-api-key", default=None, help="Optional; defaults to EMPTY")
+    args = parser.parse_args()
+
+    model_name = args.model
+    if args.use_vllm and not model_name.startswith("vllm/"):
+        model_name = f"vllm/{model_name}"
+
     model_dataset_dict = {
-        "gemini-2.5-flash_nothink": ["SimpleMC"],
-        }
-    main(model_dataset_dict, temp=1.0)
+        model_name: [args.dataset],
+    }
+    main(
+        model_dataset_dict,
+        temp=args.temp,
+        use_vllm=args.use_vllm,
+        vllm_base_url=args.vllm_base_url,
+        vllm_model=args.vllm_model,
+        vllm_api_key=args.vllm_api_key,
+    )
