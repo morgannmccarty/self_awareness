@@ -377,7 +377,7 @@ def main():
     # Hard-coded dataset - change this value to compile different datasets
     dataset = "SimpleMC"#"GPQA"#"GPSA"#"SimpleQA"# 
     
-    process_all_files(dataset, targ_model="gpt-oss-120b")
+    process_all_files(dataset, targ_model="vllm-OpenAI-gpt-oss-120b")
     
     elapsed_time = time.time() - start_time
     print(f"Compilation completed in {elapsed_time:.2f} seconds")
